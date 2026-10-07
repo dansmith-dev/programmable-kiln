@@ -1,19 +1,92 @@
 #include <Adafruit_MAX31855.h>
 
-const int SSR_PIN = 3;
+enum Type : uint8_t {
+  Ramp = 0,
+  Hold = 1
+};
 
-float setpoint = 0;            // degrees C, 0 keeps the heater off
+enum State {
+  Idle,
+  Running,
+  Finished
+};
+
+// What the user programs
+struct Step {
+  Type StepType;
+  uint16_t TargetTemp;     // degrees C
+  uint16_t DurationMins;
+};
+
+const int SSR_PIN = 3;
+const int MAX_STEPS = 20;
+
+// The program
+Step steps[MAX_STEPS] = {     // fixed for now
+  {Ramp, 600, 360},
+  {Ramp, 1000, 240},
+  {Hold, 1000, 15},
+};
+int stepCount = 3;
+
+// Firing state
+State state = Idle;
+int completedStepCount = 0;
+bool stepStarted = false;
+unsigned long stepStartMs = 0;
+float stepStartTemp = 0;
+float lastSetpoint = 0;
+unsigned long lastRemainingMs = 0;
+
+// Sensor and heater state
 unsigned long lastCheck = 0;
+float lastTemp = 0;
+bool heaterOn = false;
+
 String usbBuffer = "";
 
 Adafruit_MAX31855 thermocouple(13, 10, 12);
 
-// SET,600 to hold 600C, OFF to switch off
+// ---------- Firing ----------
+
+void SetHeater(bool on) {
+  heaterOn = on;
+  digitalWrite(SSR_PIN, on ? HIGH : LOW);
+}
+
+void StartFiring() {
+  if (state == Running || stepCount == 0) {
+    return;
+  }
+  completedStepCount = 0;
+  stepStarted = false;
+  heaterOn = false;
+  state = Running;
+  Serial.println("Firing started");
+}
+
+void StopFiring() {
+  digitalWrite(SSR_PIN, LOW);
+  heaterOn = false;
+  state = Idle;
+  Serial.println("Stopped");
+}
+
+// Where the target should be right now for this step
+float CurrentSetpoint(const Step &step, unsigned long elapsedMs) {
+  unsigned long durationMs = step.DurationMins * 60000UL;
+  if (step.StepType == Hold || elapsedMs >= durationMs) {
+    return step.TargetTemp;
+  }
+  float progress = (float)elapsedMs / durationMs;
+  return stepStartTemp + (step.TargetTemp - stepStartTemp) * progress;
+}
+
+// ---------- Commands ----------
+
 void HandleCommand(const String &cmd) {
-  if (cmd.startsWith("SET,")) setpoint = cmd.substring(4).toFloat();
-  else if (cmd == "OFF") setpoint = 0;
-  Serial.print("Setpoint ");
-  Serial.println(setpoint);
+  if (cmd == "START") StartFiring();
+  else if (cmd == "STOP") StopFiring();
 }
 
 // Reads newline-terminated commands from the Serial Monitor
@@ -29,6 +102,8 @@ void ReadCommands(Stream &port, String &buffer) {
     }
   }
 }
+
+// ---------- Main ----------
 
 void setup() {
   pinMode(SSR_PIN, OUTPUT);
@@ -48,17 +123,48 @@ void loop() {
 
   float currentTemp = thermocouple.readCelsius();
   if (isnan(currentTemp)) {
-    digitalWrite(SSR_PIN, LOW);
+    SetHeater(false);
     Serial.println("Thermocouple fault");
     return;
   }
+  lastTemp = currentTemp;
 
-  bool heat = currentTemp < setpoint;
-  digitalWrite(SSR_PIN, heat ? HIGH : LOW);
+  if (state == Running) {
+    RunFiring(currentTemp, now);
+  } else {
+    digitalWrite(SSR_PIN, LOW);
+  }
+}
 
-  Serial.print("Temp ");
-  Serial.print(currentTemp);
-  Serial.print("  target ");
-  Serial.print(setpoint);
-  Serial.println(heat ? "  heater ON" : "  heater off");
+void RunFiring(float currentTemp, unsigned long now) {
+  if (completedStepCount >= stepCount) {
+    SetHeater(false);
+    state = Finished;
+    Serial.println("Firing finished");
+    return;
+  }
+
+  const Step &currentStep = steps[completedStepCount];
+  if (!stepStarted) {
+    stepStarted = true;
+    stepStartMs = now;
+    stepStartTemp = currentTemp;
+  }
+
+  unsigned long elapsedMs = now - stepStartMs;
+  unsigned long durationMs = currentStep.DurationMins * 60000UL;
+  lastSetpoint = CurrentSetpoint(currentStep, elapsedMs);
+  lastRemainingMs = elapsedMs < durationMs ? durationMs - elapsedMs : 0;
+
+  Serial.print("Step "); Serial.print(completedStepCount + 1);
+  Serial.print("  target "); Serial.print(lastSetpoint);
+  Serial.print("  actual "); Serial.print(currentTemp);
+  Serial.println(heaterOn ? "  heater ON" : "  heater off");
+
+  SetHeater(lastSetpoint > currentTemp);
+
+  if (elapsedMs >= durationMs) {
+    completedStepCount++;
+    stepStarted = false;
+  }
 }
