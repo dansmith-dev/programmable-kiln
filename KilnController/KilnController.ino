@@ -8,7 +8,8 @@ enum Type : uint8_t {
 enum State {
   Idle,
   Running,
-  Finished
+  Finished,
+  Fault
 };
 
 // What the user programs
@@ -17,6 +18,11 @@ struct Step {
   uint16_t TargetTemp;     // degrees C
   uint16_t DurationMins;
 };
+
+// Safety limits: adjust to suit your kiln
+const float MAX_SAFE_TEMP = 1300.0;                       // never heat above this
+const int MAX_BAD_READINGS = 3;                           // bad readings in a row before faulting
+const unsigned long MAX_FIRING_MS = 24UL * 60UL * 60UL * 1000UL;
 
 const int SSR_PIN = 3;
 const int MAX_STEPS = 20;
@@ -31,15 +37,18 @@ int stepCount = 3;
 
 // Firing state
 State state = Idle;
+String faultReason = "";
 int completedStepCount = 0;
 bool stepStarted = false;
 unsigned long stepStartMs = 0;
 float stepStartTemp = 0;
+unsigned long firingStartMs = 0;
 float lastSetpoint = 0;
 unsigned long lastRemainingMs = 0;
 
 // Sensor and heater state
 unsigned long lastCheck = 0;
+int badReadings = 0;
 float lastTemp = 0;
 bool heaterOn = false;
 
@@ -54,12 +63,25 @@ void SetHeater(bool on) {
   digitalWrite(SSR_PIN, on ? HIGH : LOW);
 }
 
+// Heater off and stays off until Stop is pressed
+void TripFault(const String &reason) {
+  digitalWrite(SSR_PIN, LOW);
+  heaterOn = false;
+  if (state != Fault) {
+    state = Fault;
+    faultReason = reason;
+    Serial.print("FAULT: ");
+    Serial.println(reason);
+  }
+}
+
 void StartFiring() {
-  if (state == Running || stepCount == 0) {
+  if (state == Running || state == Fault || stepCount == 0) {
     return;
   }
   completedStepCount = 0;
   stepStarted = false;
+  firingStartMs = millis();
   heaterOn = false;
   state = Running;
   Serial.println("Firing started");
@@ -69,6 +91,7 @@ void StopFiring() {
   digitalWrite(SSR_PIN, LOW);
   heaterOn = false;
   state = Idle;
+  faultReason = "";
   Serial.println("Stopped");
 }
 
@@ -121,13 +144,23 @@ void loop() {
   }
   lastCheck = now;
 
+  // Read the temperature, tolerating the odd glitch
   float currentTemp = thermocouple.readCelsius();
   if (isnan(currentTemp)) {
     SetHeater(false);
-    Serial.println("Thermocouple fault");
+    badReadings++;
+    if (badReadings >= MAX_BAD_READINGS) {
+      TripFault("Thermocouple fault");
+    }
     return;
   }
+  badReadings = 0;
   lastTemp = currentTemp;
+
+  // Checks that apply whatever state we're in
+  if (currentTemp > MAX_SAFE_TEMP) {
+    TripFault("Over temperature");
+  }
 
   if (state == Running) {
     RunFiring(currentTemp, now);
@@ -137,6 +170,11 @@ void loop() {
 }
 
 void RunFiring(float currentTemp, unsigned long now) {
+  if (now - firingStartMs > MAX_FIRING_MS) {
+    TripFault("Firing too long");
+    return;
+  }
+
   if (completedStepCount >= stepCount) {
     SetHeater(false);
     state = Finished;
