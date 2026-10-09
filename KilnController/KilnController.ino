@@ -1,4 +1,5 @@
 #include <Adafruit_MAX31855.h>
+#include <WDT.h>
 
 enum Type : uint8_t {
   Ramp = 0,
@@ -148,9 +149,12 @@ void setup() {
   digitalWrite(SSR_PIN, LOW);
   Serial.begin(9600);
   thermocouple.begin();
+
+  WDT.begin(5000);             // reset the board if loop() stops for 5 seconds
 }
 
 void loop() {
+  WDT.refresh();
   ReadCommands(Serial, usbBuffer);
 
   unsigned long now = millis();
