@@ -22,6 +22,10 @@ struct Step {
 // Safety limits: adjust to suit your kiln
 const float MAX_SAFE_TEMP = 1300.0;                       // never heat above this
 const int MAX_BAD_READINGS = 3;                           // bad readings in a row before faulting
+const unsigned long NO_RISE_MS = 10UL * 60UL * 1000UL;    // heater on this long...
+const float NO_RISE_MIN = 5.0;                            // ...must raise the temp at least this much
+const unsigned long OFF_RISE_MS = 10UL * 60UL * 1000UL;   // heater off this long...
+const float OFF_RISE_MAX = 30.0;                          // ...must not rise more than this
 const unsigned long MAX_FIRING_MS = 24UL * 60UL * 60UL * 1000UL;
 
 const int SSR_PIN = 3;
@@ -51,6 +55,8 @@ unsigned long lastCheck = 0;
 int badReadings = 0;
 float lastTemp = 0;
 bool heaterOn = false;
+unsigned long heaterChangedMs = 0;
+float heaterChangedTemp = 0;
 
 String usbBuffer = "";
 
@@ -58,8 +64,13 @@ Adafruit_MAX31855 thermocouple(13, 10, 12);
 
 // ---------- Firing ----------
 
-void SetHeater(bool on) {
-  heaterOn = on;
+// Switches the heater, remembering when and at what temperature it last changed
+void SetHeater(bool on, float currentTemp, unsigned long now) {
+  if (on != heaterOn) {
+    heaterOn = on;
+    heaterChangedMs = now;
+    heaterChangedTemp = currentTemp;
+  }
   digitalWrite(SSR_PIN, on ? HIGH : LOW);
 }
 
@@ -83,6 +94,8 @@ void StartFiring() {
   stepStarted = false;
   firingStartMs = millis();
   heaterOn = false;
+  heaterChangedMs = millis();
+  heaterChangedTemp = lastTemp;
   state = Running;
   Serial.println("Firing started");
 }
@@ -90,6 +103,8 @@ void StartFiring() {
 void StopFiring() {
   digitalWrite(SSR_PIN, LOW);
   heaterOn = false;
+  heaterChangedMs = millis();
+  heaterChangedTemp = lastTemp;
   state = Idle;
   faultReason = "";
   Serial.println("Stopped");
@@ -147,7 +162,7 @@ void loop() {
   // Read the temperature, tolerating the odd glitch
   float currentTemp = thermocouple.readCelsius();
   if (isnan(currentTemp)) {
-    SetHeater(false);
+    SetHeater(false, lastTemp, now);
     badReadings++;
     if (badReadings >= MAX_BAD_READINGS) {
       TripFault("Thermocouple fault");
@@ -160,6 +175,13 @@ void loop() {
   // Checks that apply whatever state we're in
   if (currentTemp > MAX_SAFE_TEMP) {
     TripFault("Over temperature");
+  }
+  if (!heaterOn && now - heaterChangedMs >= OFF_RISE_MS) {
+    if (currentTemp - heaterChangedTemp > OFF_RISE_MAX) {
+      TripFault("Rising while off");      // relay probably stuck on
+    }
+    heaterChangedMs = now;
+    heaterChangedTemp = currentTemp;
   }
 
   if (state == Running) {
@@ -176,7 +198,7 @@ void RunFiring(float currentTemp, unsigned long now) {
   }
 
   if (completedStepCount >= stepCount) {
-    SetHeater(false);
+    SetHeater(false, currentTemp, now);
     state = Finished;
     Serial.println("Firing finished");
     return;
@@ -199,7 +221,17 @@ void RunFiring(float currentTemp, unsigned long now) {
   Serial.print("  actual "); Serial.print(currentTemp);
   Serial.println(heaterOn ? "  heater ON" : "  heater off");
 
-  SetHeater(lastSetpoint > currentTemp);
+  SetHeater(lastSetpoint > currentTemp, currentTemp, now);
+
+  // Heater on solidly but the kiln isn't warming up
+  if (heaterOn && now - heaterChangedMs >= NO_RISE_MS) {
+    if (currentTemp - heaterChangedTemp < NO_RISE_MIN) {
+      TripFault("No temperature rise");
+      return;
+    }
+    heaterChangedMs = now;
+    heaterChangedTemp = currentTemp;
+  }
 
   if (elapsedMs >= durationMs) {
     completedStepCount++;
