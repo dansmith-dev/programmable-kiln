@@ -1,4 +1,5 @@
 #include <Adafruit_MAX31855.h>
+#include <EEPROM.h>
 #include <WDT.h>
 
 enum Type : uint8_t {
@@ -13,7 +14,7 @@ enum State {
   Fault
 };
 
-// What the user programs
+// What the user programs. This is what gets saved to EEPROM.
 struct Step {
   Type StepType;
   uint16_t TargetTemp;     // degrees C
@@ -31,14 +32,11 @@ const unsigned long MAX_FIRING_MS = 24UL * 60UL * 60UL * 1000UL;
 
 const int SSR_PIN = 3;
 const int MAX_STEPS = 20;
+const uint8_t SAVE_MARKER = 0xA5;
 
 // The program
-Step steps[MAX_STEPS] = {     // fixed for now
-  {Ramp, 600, 360},
-  {Ramp, 1000, 240},
-  {Hold, 1000, 15},
-};
-int stepCount = 3;
+Step steps[MAX_STEPS];
+int stepCount = 0;
 
 // Firing state
 State state = Idle;
@@ -62,6 +60,66 @@ float heaterChangedTemp = 0;
 String usbBuffer = "";
 
 Adafruit_MAX31855 thermocouple(13, 10, 12);
+
+// ---------- Saving ----------
+
+void SaveSteps() {
+  int addr = 0;
+  EEPROM.put(addr, SAVE_MARKER);
+  addr += sizeof(SAVE_MARKER);
+  EEPROM.put(addr, (uint8_t)stepCount);
+  addr += sizeof(uint8_t);
+  for (int i = 0; i < stepCount; i++) {
+    EEPROM.put(addr, steps[i]);
+    addr += sizeof(Step);
+    WDT.refresh();             // EEPROM writes are slow, keep the watchdog happy
+  }
+}
+
+void LoadSteps() {
+  uint8_t marker = 0;
+  uint8_t count = 0;
+  EEPROM.get(0, marker);
+  EEPROM.get(1, count);
+  stepCount = 0;
+  if (marker != SAVE_MARKER || count > MAX_STEPS) {
+    return;                    // nothing saved yet
+  }
+
+  int addr = 2;
+  for (int i = 0; i < count; i++) {
+    Step s;
+    EEPROM.get(addr, s);
+    addr += sizeof(Step);
+    if (s.StepType > Hold || s.TargetTemp > MAX_SAFE_TEMP || s.DurationMins == 0) {
+      break;                   // corrupt entry, keep the steps before it
+    }
+    steps[stepCount] = s;
+    stepCount++;
+  }
+}
+
+// ---------- Editing the program ----------
+
+// args is "type,temp,mins", e.g. "0,600,120"
+void SaveEditedStep(const String &args) {
+  int c1 = args.indexOf(',');
+  int c2 = args.indexOf(',', c1 + 1);
+  if (c1 < 0 || c2 < 0) return;
+
+  long type = args.substring(0, c1).toInt();
+  long temp = args.substring(c1 + 1, c2).toInt();
+  long mins = args.substring(c2 + 1).toInt();
+  if (temp < 0 || temp > MAX_SAFE_TEMP || mins <= 0 || mins > 65535) {
+    return;                    // out of range, ignore
+  }
+
+  Step s = {type == 1 ? Hold : Ramp, (uint16_t)temp, (uint16_t)mins};
+  if (stepCount >= MAX_STEPS) return;
+  steps[stepCount] = s;
+  stepCount++;
+  SaveSteps();
+}
 
 // ---------- Firing ----------
 
@@ -126,6 +184,11 @@ float CurrentSetpoint(const Step &step, unsigned long elapsedMs) {
 void HandleCommand(const String &cmd) {
   if (cmd == "START") StartFiring();
   else if (cmd == "STOP") StopFiring();
+  else if (cmd.startsWith("SAVE,")) SaveEditedStep(cmd.substring(5));
+  else if (cmd == "CLEAR") {       // from the Serial Monitor: remove every step
+    stepCount = 0;
+    SaveSteps();
+  }
 }
 
 // Reads newline-terminated commands from the Serial Monitor
@@ -149,6 +212,10 @@ void setup() {
   digitalWrite(SSR_PIN, LOW);
   Serial.begin(9600);
   thermocouple.begin();
+
+  LoadSteps();
+  Serial.print(stepCount);
+  Serial.println(" steps loaded");
 
   WDT.begin(5000);             // reset the board if loop() stops for 5 seconds
 }
