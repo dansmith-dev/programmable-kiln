@@ -38,6 +38,8 @@ const uint8_t SAVE_MARKER = 0xA5;
 Step steps[MAX_STEPS];
 int stepCount = 0;
 
+String currentPage = "Run";
+
 // Firing state
 State state = Idle;
 String faultReason = "";
@@ -58,8 +60,59 @@ unsigned long heaterChangedMs = 0;
 float heaterChangedTemp = 0;
 
 String usbBuffer = "";
+String screenBuffer = "";
 
 Adafruit_MAX31855 thermocouple(13, 10, 12);
+
+// ---------- Screen ----------
+
+void SendScreen(const String &command) {
+  Serial1.print(command);
+  Serial1.write(0xFF);
+  Serial1.write(0xFF);
+  Serial1.write(0xFF);
+}
+
+void SetScreenText(const String &component, const String &text) {
+  SendScreen(component + ".txt=\"" + text + "\"");
+}
+
+String StepText(int i) {
+  const Step &s = steps[i];
+  return String(i + 1) + " " + (s.StepType == Hold ? "Hold " : "Ramp ")
+       + String(s.TargetTemp) + "C " + String(s.DurationMins) + "m";
+}
+
+String StateText() {
+  switch (state) {
+    case Running:  return "Running";
+    case Finished: return "Finished";
+    case Fault:    return "Fault";
+    default:       return "Idle";
+  }
+}
+
+void RefreshRunPage() {
+  if (currentPage != "Run") return;
+
+  SetScreenText("tTemp", String(lastTemp, 0));
+  SetScreenText("tStatus", StateText());
+
+  if (state == Fault) {
+    SetScreenText("tStep", faultReason);
+    SetScreenText("tTime", "Press Stop to reset");
+    SetScreenText("tTarget", "");
+  } else if (state == Running && completedStepCount < stepCount) {
+    SetScreenText("tStep", "Step " + String(completedStepCount + 1) + "/" + String(stepCount)
+                  + ": " + StepText(completedStepCount).substring(2));
+    SetScreenText("tTime", "Remaining " + String(lastRemainingMs / 60000UL) + "m");
+    SetScreenText("tTarget", "Target " + String(lastSetpoint, 0));
+  } else {
+    SetScreenText("tStep", String(stepCount) + " steps programmed");
+    SetScreenText("tTime", "");
+    SetScreenText("tTarget", "");
+  }
+}
 
 // ---------- Saving ----------
 
@@ -142,6 +195,7 @@ void TripFault(const String &reason) {
     faultReason = reason;
     Serial.print("FAULT: ");
     Serial.println(reason);
+    RefreshRunPage();
   }
 }
 
@@ -157,6 +211,7 @@ void StartFiring() {
   heaterChangedTemp = lastTemp;
   state = Running;
   Serial.println("Firing started");
+  RefreshRunPage();
 }
 
 void StopFiring() {
@@ -167,6 +222,7 @@ void StopFiring() {
   state = Idle;
   faultReason = "";
   Serial.println("Stopped");
+  RefreshRunPage();
 }
 
 // Where the target should be right now for this step
@@ -184,6 +240,11 @@ float CurrentSetpoint(const Step &step, unsigned long elapsedMs) {
 void HandleCommand(const String &cmd) {
   if (cmd == "START") StartFiring();
   else if (cmd == "STOP") StopFiring();
+  else if (cmd.startsWith("PAGE,")) {
+    currentPage = cmd.substring(5);
+    RefreshRunPage();
+    return;
+  }
   else if (cmd.startsWith("SAVE,")) SaveEditedStep(cmd.substring(5));
   else if (cmd == "CLEAR") {       // from the Serial Monitor: remove every step
     stepCount = 0;
@@ -191,7 +252,7 @@ void HandleCommand(const String &cmd) {
   }
 }
 
-// Reads newline-terminated commands from the Serial Monitor
+// Reads newline-terminated commands from the screen or the Serial Monitor
 void ReadCommands(Stream &port, String &buffer) {
   while (port.available()) {
     char c = port.read();
@@ -199,6 +260,8 @@ void ReadCommands(Stream &port, String &buffer) {
       buffer.trim();
       if (buffer.length() > 0) HandleCommand(buffer);
       buffer = "";
+    } else if (c < 32 || c > 126) {
+      buffer = "";             // ignore the screen's start-up and error bytes
     } else if (buffer.length() < 40) {
       buffer += c;
     }
@@ -211,6 +274,7 @@ void setup() {
   pinMode(SSR_PIN, OUTPUT);
   digitalWrite(SSR_PIN, LOW);
   Serial.begin(9600);
+  Serial1.begin(9600);
   thermocouple.begin();
 
   LoadSteps();
@@ -218,11 +282,13 @@ void setup() {
   Serial.println(" steps loaded");
 
   WDT.begin(5000);             // reset the board if loop() stops for 5 seconds
+  RefreshRunPage();
 }
 
 void loop() {
   WDT.refresh();
   ReadCommands(Serial, usbBuffer);
+  ReadCommands(Serial1, screenBuffer);
 
   unsigned long now = millis();
   if (now - lastCheck < 1000) {
@@ -260,6 +326,8 @@ void loop() {
   } else {
     digitalWrite(SSR_PIN, LOW);
   }
+
+  RefreshRunPage();
 }
 
 void RunFiring(float currentTemp, unsigned long now) {
