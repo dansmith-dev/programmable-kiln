@@ -32,12 +32,18 @@ const unsigned long MAX_FIRING_MS = 24UL * 60UL * 60UL * 1000UL;
 
 const int SSR_PIN = 3;
 const int MAX_STEPS = 20;
+const int ROWS = 4;                        // step rows shown on the Program page
+const uint16_t SELECTED_COLOUR = 50712;    // light grey
+const uint16_t NORMAL_COLOUR = 65535;      // white
 const uint8_t SAVE_MARKER = 0xA5;
 
 // The program
 Step steps[MAX_STEPS];
 int stepCount = 0;
 
+// Program page state
+int selected = -1;        // index of the selected step, -1 for none
+int scrollOffset = 0;     // index of the step shown in the top row
 String currentPage = "Run";
 
 // Firing state
@@ -114,6 +120,22 @@ void RefreshRunPage() {
   }
 }
 
+void RefreshProgramPage() {
+  if (currentPage != "Program") return;
+
+  for (int r = 0; r < ROWS; r++) {
+    int i = scrollOffset + r;
+    String row = "tRow" + String(r);
+    SetScreenText(row, i < stepCount ? StepText(i) : "");
+    SendScreen(row + ".bco=" + String(i == selected ? SELECTED_COLOUR : NORMAL_COLOUR));
+  }
+}
+
+void RefreshPage() {
+  if (currentPage == "Run") RefreshRunPage();
+  else if (currentPage == "Program") RefreshProgramPage();
+}
+
 // ---------- Saving ----------
 
 void SaveSteps() {
@@ -154,6 +176,13 @@ void LoadSteps() {
 
 // ---------- Editing the program ----------
 
+void KeepSelectionVisible() {
+  if (selected >= 0 && selected < scrollOffset) scrollOffset = selected;
+  if (selected >= scrollOffset + ROWS) scrollOffset = selected - ROWS + 1;
+  int maxOffset = max(0, stepCount - ROWS);
+  if (scrollOffset > maxOffset) scrollOffset = maxOffset;
+}
+
 // args is "type,temp,mins", e.g. "0,600,120"
 void SaveEditedStep(const String &args) {
   int c1 = args.indexOf(',');
@@ -170,6 +199,7 @@ void SaveEditedStep(const String &args) {
   Step s = {type == 1 ? Hold : Ramp, (uint16_t)temp, (uint16_t)mins};
   if (stepCount >= MAX_STEPS) return;
   steps[stepCount] = s;
+  selected = stepCount;
   stepCount++;
   SaveSteps();
 }
@@ -242,14 +272,27 @@ void HandleCommand(const String &cmd) {
   else if (cmd == "STOP") StopFiring();
   else if (cmd.startsWith("PAGE,")) {
     currentPage = cmd.substring(5);
-    RefreshRunPage();
+    RefreshPage();
     return;
+  }
+  else if (cmd.startsWith("SEL,")) {
+    int i = scrollOffset + cmd.substring(4).toInt();
+    if (i >= 0 && i < stepCount) selected = i;
+  }
+  else if (cmd == "SCROLLUP") {
+    if (scrollOffset > 0) scrollOffset--;
+  }
+  else if (cmd == "SCROLLDN") {
+    if (scrollOffset + ROWS < stepCount) scrollOffset++;
   }
   else if (cmd.startsWith("SAVE,")) SaveEditedStep(cmd.substring(5));
   else if (cmd == "CLEAR") {       // from the Serial Monitor: remove every step
     stepCount = 0;
     SaveSteps();
   }
+
+  KeepSelectionVisible();
+  RefreshProgramPage();
 }
 
 // Reads newline-terminated commands from the screen or the Serial Monitor
