@@ -200,6 +200,26 @@ void KeepSelectionVisible() {
   if (scrollOffset > maxOffset) scrollOffset = maxOffset;
 }
 
+void DeleteSelected() {
+  if (selected < 0 || selected >= stepCount) return;
+  for (int i = selected; i < stepCount - 1; i++) {
+    steps[i] = steps[i + 1];
+  }
+  stepCount--;
+  if (selected >= stepCount) selected = stepCount - 1;
+  SaveSteps();
+}
+
+void MoveSelected(int direction) {
+  int other = selected + direction;
+  if (selected < 0 || other < 0 || other >= stepCount) return;
+  Step temp = steps[selected];
+  steps[selected] = steps[other];
+  steps[other] = temp;
+  selected = other;
+  SaveSteps();
+}
+
 // args is "type,temp,mins", e.g. "0,600,120"
 void SaveEditedStep(const String &args) {
   int c1 = args.indexOf(',');
@@ -322,11 +342,10 @@ void HandleCommand(const String &cmd) {
     }
     return;
   }
+  else if (cmd == "DEL") DeleteSelected();
+  else if (cmd == "MOVEUP") MoveSelected(-1);
+  else if (cmd == "MOVEDN") MoveSelected(1);
   else if (cmd.startsWith("SAVE,")) SaveEditedStep(cmd.substring(5));
-  else if (cmd == "CLEAR") {       // from the Serial Monitor: remove every step
-    stepCount = 0;
-    SaveSteps();
-  }
 
   KeepSelectionVisible();
   RefreshProgramPage();
