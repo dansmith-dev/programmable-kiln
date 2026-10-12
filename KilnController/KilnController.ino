@@ -44,6 +44,8 @@ int stepCount = 0;
 // Program page state
 int selected = -1;        // index of the selected step, -1 for none
 int scrollOffset = 0;     // index of the step shown in the top row
+int editingIndex = -1;    // step being edited, -1 when adding a new one
+bool fillEditPending = false;   // fill the Edit page once, not after each keypad entry
 String currentPage = "Run";
 
 // Firing state
@@ -131,9 +133,24 @@ void RefreshProgramPage() {
   }
 }
 
+void FillEditPage() {
+  Step s = {Ramp, 100, 60};    // defaults for a new step
+  if (editingIndex >= 0 && editingIndex < stepCount) {
+    s = steps[editingIndex];
+  }
+  SendScreen("bt0.val=" + String(s.StepType == Hold ? 1 : 0));
+  SetScreenText("bt0", s.StepType == Hold ? "Hold" : "Ramp");
+  SendScreen("nTemp.val=" + String(s.TargetTemp));
+  SendScreen("nMins.val=" + String(s.DurationMins));
+}
+
 void RefreshPage() {
   if (currentPage == "Run") RefreshRunPage();
   else if (currentPage == "Program") RefreshProgramPage();
+  else if (currentPage == "Edit" && fillEditPending) {
+    FillEditPage();
+    fillEditPending = false;
+  }
 }
 
 // ---------- Saving ----------
@@ -197,10 +214,14 @@ void SaveEditedStep(const String &args) {
   }
 
   Step s = {type == 1 ? Hold : Ramp, (uint16_t)temp, (uint16_t)mins};
-  if (stepCount >= MAX_STEPS) return;
-  steps[stepCount] = s;
-  selected = stepCount;
-  stepCount++;
+  if (editingIndex < 0) {
+    if (stepCount >= MAX_STEPS) return;
+    steps[stepCount] = s;
+    selected = stepCount;
+    stepCount++;
+  } else if (editingIndex < stepCount) {
+    steps[editingIndex] = s;
+  }
   SaveSteps();
 }
 
@@ -284,6 +305,22 @@ void HandleCommand(const String &cmd) {
   }
   else if (cmd == "SCROLLDN") {
     if (scrollOffset + ROWS < stepCount) scrollOffset++;
+  }
+  else if (cmd == "ADD") {
+    if (stepCount < MAX_STEPS) {
+      editingIndex = -1;
+      fillEditPending = true;
+      SendScreen("page Edit");
+    }
+    return;
+  }
+  else if (cmd == "EDIT") {
+    if (selected >= 0 && selected < stepCount) {
+      editingIndex = selected;
+      fillEditPending = true;
+      SendScreen("page Edit");
+    }
+    return;
   }
   else if (cmd.startsWith("SAVE,")) SaveEditedStep(cmd.substring(5));
   else if (cmd == "CLEAR") {       // from the Serial Monitor: remove every step
