@@ -1,0 +1,5 @@
+# Nextion and image files are binary
+*.HMI binary
+*.tft binary
+*.zi binary
+*.png binary
