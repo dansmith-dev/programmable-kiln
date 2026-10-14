@@ -326,6 +326,9 @@ void HandleCommand(const String &cmd) {
   else if (cmd == "SCROLLDN") {
     if (scrollOffset + ROWS < stepCount) scrollOffset++;
   }
+  else if (state == Running) {
+    return;                    // no changes to the program mid-firing
+  }
   else if (cmd == "ADD") {
     if (stepCount < MAX_STEPS) {
       editingIndex = -1;
