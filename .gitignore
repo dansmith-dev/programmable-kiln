@@ -3,3 +3,6 @@ build/
 *.bin
 *.elf
 *.hex
+
+# WiFi password; copy arduino_secrets.example.h to create it
+arduino_secrets.h

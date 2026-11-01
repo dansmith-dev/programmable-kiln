@@ -1,6 +1,8 @@
 #include <Adafruit_MAX31855.h>
 #include <EEPROM.h>
 #include <WDT.h>
+#include <WiFiS3.h>
+#include "arduino_secrets.h"
 
 enum Type : uint8_t {
   Ramp = 0,
@@ -383,6 +385,8 @@ void setup() {
   Serial.print(stepCount);
   Serial.println(" steps loaded");
 
+  WebSetup();                  // joins WiFi, can take up to 10 seconds so it runs before the watchdog starts
+
   WDT.begin(5000);             // reset the board if loop() stops for 5 seconds
   RefreshRunPage();
 }
@@ -391,6 +395,7 @@ void loop() {
   WDT.refresh();
   ReadCommands(Serial, usbBuffer);
   ReadCommands(Serial1, screenBuffer);
+  WebLoop();
 
   unsigned long now = millis();
   if (now - lastCheck < 1000) {
