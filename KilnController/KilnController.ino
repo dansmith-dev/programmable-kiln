@@ -122,6 +122,11 @@ void RefreshRunPage() {
     SetScreenText("tTime", "");
     SetScreenText("tTarget", "");
   }
+
+  // Show the web address when idle
+  if (state == Idle || state == Finished) {
+    SetScreenText("tTime", WebAddressText());
+  }
 }
 
 void RefreshProgramPage() {

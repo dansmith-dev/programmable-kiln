@@ -7,6 +7,7 @@ WiFiServer webServer(80);
 bool wifiModulePresent = false;
 bool wifiConnected = false;
 unsigned long lastWifiCheckMs = 0;
+String ipText = "";
 
 // ---------- Called from the main sketch ----------
 
@@ -49,6 +50,12 @@ void WebLoop() {
   client.stop();
 }
 
+String WebAddressText() {
+  if (!wifiModulePresent) return "";
+  if (!wifiConnected) return "WiFi offline";
+  return "Web " + ipText;
+}
+
 // ---------- WiFi ----------
 
 void CheckWifi(unsigned long now) {
@@ -61,11 +68,15 @@ void CheckWifi(unsigned long now) {
   if (connected && !wifiConnected) {
     wifiConnected = true;
     webServer.begin();
+    ipText = WiFi.localIP().toString();
     Serial.print("Web control at http://");
-    Serial.println(WiFi.localIP());
+    Serial.println(ipText);
+    RefreshRunPage();
   } else if (!connected && wifiConnected) {
     wifiConnected = false;
+    ipText = "";
     Serial.println("WiFi lost");
+    RefreshRunPage();
   }
 }
 
