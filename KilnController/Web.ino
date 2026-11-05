@@ -1,6 +1,18 @@
 // ---------- Web control ----------
-// Joins your home WiFi (set in arduino_secrets.h) and serves the kiln over HTTP on port 80.
+// Serves the web page and a small JSON API on port 80 over your home WiFi.
+//
+// Pairing: a browser asks for a code, the kiln shows a 6-digit code on the Run page,
+// and once the code is typed into the browser it gets a token that it sends with every
+// request (X-Kiln-Token header). Tokens are kept in EEPROM so paired browsers survive
+// a power cut. Type FORGETWEB in the Serial Monitor to unpair every browser.
 
+const unsigned long PAIR_CODE_MS = 3UL * 60UL * 1000UL;   // how long a code stays valid
+const unsigned long PAIR_COOLDOWN_MS = 10UL * 1000UL;     // minimum gap between new codes
+const int PAIR_MAX_ATTEMPTS = 5;                           // wrong guesses before the code is cancelled
+const int MAX_WEB_DEVICES = 4;                             // oldest is replaced when a 5th pairs
+const int TOKEN_BYTES = 16;
+const int TOKEN_EEPROM_ADDR = 256;                         // the program uses bytes 0-121
+const uint8_t TOKEN_MARKER = 0x5A;
 const unsigned long WIFI_CHECK_MS = 5000UL;
 const unsigned long REQUEST_TIMEOUT_MS = 2000UL;
 const unsigned int MAX_BODY = 600;
@@ -11,14 +23,26 @@ bool wifiConnected = false;
 unsigned long lastWifiCheckMs = 0;
 String ipText = "";
 
+String pairCode = "";
+unsigned long pairStartedMs = 0;
+bool pairEverStarted = false;
+int pairAttemptsLeft = 0;
+
+uint8_t webTokens[MAX_WEB_DEVICES][TOKEN_BYTES];
+uint8_t nextTokenSlot = 0;
+
 // The request being handled
 String reqMethod = "";
 String reqPath = "";
+String reqToken = "";
 String reqBody = "";
 
 // ---------- Called from the main sketch ----------
 
 void WebSetup() {
+  LoadWebTokens();
+  randomSeed(analogRead(A0) ^ ((long)analogRead(A1) << 10) ^ ((long)analogRead(A2) << 20) ^ micros());
+
   if (WiFi.status() == WL_NO_MODULE) {
     Serial.println("WiFi module not found, web control disabled");
     return;
@@ -40,6 +64,10 @@ void WebLoop() {
   if (!wifiModulePresent) return;
   unsigned long now = millis();
 
+  if (WebPairingActive() && now - pairStartedMs > PAIR_CODE_MS) {
+    EndPairing();
+  }
+
   if (now - lastWifiCheckMs >= WIFI_CHECK_MS) {
     lastWifiCheckMs = now;
     CheckWifi(now);
@@ -54,10 +82,24 @@ void WebLoop() {
   client.stop();
 }
 
+bool WebPairingActive() {
+  return pairCode.length() > 0;
+}
+
+String WebPairingCode() {
+  return pairCode;
+}
+
 String WebAddressText() {
   if (!wifiModulePresent) return "";
   if (!wifiConnected) return "WiFi offline";
   return "Web " + ipText;
+}
+
+void ForgetAllWebDevices() {
+  memset(webTokens, 0, sizeof(webTokens));
+  nextTokenSlot = 0;
+  SaveWebTokens();
 }
 
 // ---------- WiFi ----------
@@ -84,12 +126,152 @@ void CheckWifi(unsigned long now) {
   }
 }
 
+// ---------- Pairing ----------
+
+void StartPairing(WiFiClient &c) {
+  unsigned long now = millis();
+  if (WebPairingActive()) {
+    unsigned long left = (PAIR_CODE_MS - (now - pairStartedMs)) / 1000UL;
+    SendJson(c, 200, "{\"seconds\":" + String(left) + "}");
+    return;
+  }
+  if (pairEverStarted && now - pairStartedMs < PAIR_COOLDOWN_MS) {
+    SendError(c, 429, "Please wait a few seconds and try again");
+    return;
+  }
+
+  long n = (random(1000000L) + (long)(micros() % 1000000UL)) % 1000000L;
+  String code = String(n);
+  while (code.length() < 6) code = "0" + code;
+
+  pairCode = code;
+  pairStartedMs = now;
+  pairEverStarted = true;
+  pairAttemptsLeft = PAIR_MAX_ATTEMPTS;
+  Serial.println("Web pairing code " + pairCode);
+
+  // Make sure the code is on screen
+  currentPage = "Run";
+  SendScreen("page Run");
+  RefreshRunPage();
+
+  SendJson(c, 200, "{\"seconds\":" + String(PAIR_CODE_MS / 1000UL) + "}");
+}
+
+void EndPairing() {
+  pairCode = "";
+  RefreshRunPage();
+}
+
+void FinishPairing(WiFiClient &c) {
+  String code = reqBody;
+  code.trim();
+
+  if (!WebPairingActive()) {
+    SendError(c, 410, "No code is showing on the kiln. Ask for a new one.");
+    return;
+  }
+  if (code != pairCode) {
+    pairAttemptsLeft--;
+    if (pairAttemptsLeft <= 0) {
+      EndPairing();
+      SendError(c, 403, "Too many wrong codes. Ask for a new one.");
+    } else {
+      SendJson(c, 403, "{\"error\":\"That code doesn't match\",\"left\":" + String(pairAttemptsLeft) + "}");
+    }
+    return;
+  }
+
+  uint8_t *slot = webTokens[nextTokenSlot];
+  for (int i = 0; i < TOKEN_BYTES; i++) {
+    slot[i] = (uint8_t)((random(256) ^ (micros() >> (i % 8))) & 0xFF);
+  }
+  slot[0] |= 1;   // never all zeros, which means an empty slot
+  String token = TokenToHex(slot);
+  nextTokenSlot = (nextTokenSlot + 1) % MAX_WEB_DEVICES;
+  SaveWebTokens();
+  EndPairing();
+  Serial.println("Web browser paired");
+
+  SendJson(c, 200, "{\"token\":\"" + token + "\"}");
+}
+
+// Index of the slot holding the request's token, or -1
+int FindToken() {
+  if (reqToken.length() != TOKEN_BYTES * 2) return -1;
+  uint8_t wanted[TOKEN_BYTES];
+  for (int i = 0; i < TOKEN_BYTES; i++) {
+    int hi = HexValue(reqToken[i * 2]);
+    int lo = HexValue(reqToken[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return -1;
+    wanted[i] = (uint8_t)(hi * 16 + lo);
+  }
+  for (int s = 0; s < MAX_WEB_DEVICES; s++) {
+    if (SlotEmpty(s)) continue;
+    if (memcmp(webTokens[s], wanted, TOKEN_BYTES) == 0) return s;
+  }
+  return -1;
+}
+
+bool SlotEmpty(int s) {
+  for (int i = 0; i < TOKEN_BYTES; i++) {
+    if (webTokens[s][i] != 0) return false;
+  }
+  return true;
+}
+
+int HexValue(char ch) {
+  if (ch >= '0' && ch <= '9') return ch - '0';
+  if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+  if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+  return -1;
+}
+
+String TokenToHex(const uint8_t *bytes) {
+  const char *digits = "0123456789abcdef";
+  String out = "";
+  for (int i = 0; i < TOKEN_BYTES; i++) {
+    out += digits[bytes[i] >> 4];
+    out += digits[bytes[i] & 0x0F];
+  }
+  return out;
+}
+
+void LoadWebTokens() {
+  uint8_t marker = 0;
+  EEPROM.get(TOKEN_EEPROM_ADDR, marker);
+  if (marker != TOKEN_MARKER) {
+    memset(webTokens, 0, sizeof(webTokens));
+    nextTokenSlot = 0;
+    return;
+  }
+  EEPROM.get(TOKEN_EEPROM_ADDR + 1, nextTokenSlot);
+  if (nextTokenSlot >= MAX_WEB_DEVICES) nextTokenSlot = 0;
+  for (int s = 0; s < MAX_WEB_DEVICES; s++) {
+    for (int i = 0; i < TOKEN_BYTES; i++) {
+      webTokens[s][i] = EEPROM.read(TOKEN_EEPROM_ADDR + 2 + s * TOKEN_BYTES + i);
+    }
+  }
+}
+
+void SaveWebTokens() {
+  EEPROM.put(TOKEN_EEPROM_ADDR, TOKEN_MARKER);
+  EEPROM.put(TOKEN_EEPROM_ADDR + 1, nextTokenSlot);
+  for (int s = 0; s < MAX_WEB_DEVICES; s++) {
+    for (int i = 0; i < TOKEN_BYTES; i++) {
+      EEPROM.update(TOKEN_EEPROM_ADDR + 2 + s * TOKEN_BYTES + i, webTokens[s][i]);
+    }
+    WDT.refresh();             // EEPROM writes are slow, keep the watchdog happy
+  }
+}
+
 // ---------- HTTP ----------
 
 // Reads the request line, the headers we care about and the body into the req* globals
 bool ReadRequest(WiFiClient &c) {
   reqMethod = "";
   reqPath = "";
+  reqToken = "";
   reqBody = "";
 
   unsigned long start = millis();
@@ -130,6 +312,7 @@ bool ReadRequest(WiFiClient &c) {
         String value = line.substring(colon + 1);
         value.trim();
         if (name == "content-length") contentLength = value.toInt();
+        else if (name == "x-kiln-token") reqToken = value;
       }
     }
     line = "";
@@ -156,11 +339,20 @@ void HandleRequest(WiFiClient &c) {
   bool post = reqMethod == "POST";
 
   if (get && (reqPath == "/" || reqPath == "/index.html")) { SendPlaceholder(c); return; }
+  if (post && reqPath == "/api/pair/start") { StartPairing(c); return; }
+  if (post && reqPath == "/api/pair") { FinishPairing(c); return; }
 
   if (!reqPath.startsWith("/api/")) { SendError(c, 404, "Not found"); return; }
 
+  int slot = FindToken();
+  if (slot < 0) { SendError(c, 401, "Not paired"); return; }
+
   if (get && reqPath == "/api/status") {
     SendJson(c, 200, StatusJson());
+  } else if (post && reqPath == "/api/unpair") {
+    memset(webTokens[slot], 0, TOKEN_BYTES);
+    SaveWebTokens();
+    SendJson(c, 200, "{}");
   } else {
     SendError(c, 404, "Not found");
   }

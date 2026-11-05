@@ -123,8 +123,10 @@ void RefreshRunPage() {
     SetScreenText("tTarget", "");
   }
 
-  // Show the web address when idle
-  if (state == Idle || state == Finished) {
+  // Web pairing code takes over the time line while it's valid; otherwise show the address when idle
+  if (WebPairingActive()) {
+    SetScreenText("tTime", "Web code " + WebPairingCode());
+  } else if (state == Idle || state == Finished) {
     SetScreenText("tTime", WebAddressText());
   }
 }
@@ -318,6 +320,11 @@ float CurrentSetpoint(const Step &step, unsigned long elapsedMs) {
 void HandleCommand(const String &cmd) {
   if (cmd == "START") StartFiring();
   else if (cmd == "STOP") StopFiring();
+  else if (cmd == "FORGETWEB") {   // from the Serial Monitor: unpair every web browser
+    ForgetAllWebDevices();
+    Serial.println("All web devices forgotten");
+    return;
+  }
   else if (cmd.startsWith("PAGE,")) {
     currentPage = cmd.substring(5);
     RefreshPage();
