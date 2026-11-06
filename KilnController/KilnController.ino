@@ -43,6 +43,8 @@ const uint8_t SAVE_MARKER = 0xA5;
 Step steps[MAX_STEPS];
 int stepCount = 0;
 
+uint16_t programVersion = 0;    // goes up whenever the program changes, so the web page knows to reload it
+
 // Program page state
 int selected = -1;        // index of the selected step, -1 for none
 int scrollOffset = 0;     // index of the step shown in the top row
@@ -165,6 +167,7 @@ void RefreshPage() {
 // ---------- Saving ----------
 
 void SaveSteps() {
+  programVersion++;
   int addr = 0;
   EEPROM.put(addr, SAVE_MARKER);
   addr += sizeof(SAVE_MARKER);
@@ -252,6 +255,48 @@ void SaveEditedStep(const String &args) {
     steps[editingIndex] = s;
   }
   SaveSteps();
+}
+
+// Replaces the whole program from the web page.
+// text is "type,temp,mins;type,temp,mins;..." e.g. "0,600,120;1,600,30". Empty text clears the program.
+// Returns false and changes nothing if any step is invalid or a firing is running.
+bool ReplaceProgram(const String &text) {
+  if (state == Running) return false;
+
+  Step parsed[MAX_STEPS];
+  int count = 0;
+  int pos = 0;
+  while (pos < (int)text.length()) {
+    int end = text.indexOf(';', pos);
+    if (end < 0) end = text.length();
+    String item = text.substring(pos, end);
+    pos = end + 1;
+    item.trim();
+    if (item.length() == 0) continue;
+    if (count >= MAX_STEPS) return false;
+
+    int c1 = item.indexOf(',');
+    int c2 = item.indexOf(',', c1 + 1);
+    if (c1 < 0 || c2 < 0) return false;
+    long type = item.substring(0, c1).toInt();
+    long temp = item.substring(c1 + 1, c2).toInt();
+    long mins = item.substring(c2 + 1).toInt();
+    if ((type != 0 && type != 1) || temp < 0 || temp > MAX_SAFE_TEMP || mins <= 0 || mins > 65535) {
+      return false;
+    }
+    parsed[count] = {type == 1 ? Hold : Ramp, (uint16_t)temp, (uint16_t)mins};
+    count++;
+  }
+
+  for (int i = 0; i < count; i++) steps[i] = parsed[i];
+  stepCount = count;
+  selected = -1;
+  scrollOffset = 0;
+  if (state == Finished) state = Idle;
+  SaveSteps();
+  RefreshProgramPage();
+  RefreshRunPage();
+  return true;
 }
 
 // ---------- Firing ----------

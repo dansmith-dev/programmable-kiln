@@ -349,6 +349,22 @@ void HandleRequest(WiFiClient &c) {
 
   if (get && reqPath == "/api/status") {
     SendJson(c, 200, StatusJson());
+  } else if (get && reqPath == "/api/program") {
+    SendJson(c, 200, ProgramJson());
+  } else if (post && reqPath == "/api/program") {
+    if (state == Running) SendError(c, 409, "Stop the firing before changing the program");
+    else if (!ReplaceProgram(reqBody)) SendError(c, 400, "The program has an invalid step");
+    else SendJson(c, 200, ProgramJson());
+  } else if (post && reqPath == "/api/start") {
+    if (state == Fault) SendError(c, 409, "Clear the fault with Stop first");
+    else if (stepCount == 0) SendError(c, 409, "There's no program to run");
+    else {
+      StartFiring();
+      SendJson(c, 200, StatusJson());
+    }
+  } else if (post && reqPath == "/api/stop") {
+    StopFiring();
+    SendJson(c, 200, StatusJson());
   } else if (post && reqPath == "/api/unpair") {
     memset(webTokens[slot], 0, TOKEN_BYTES);
     SaveWebTokens();
@@ -426,7 +442,20 @@ String StatusJson() {
   json += ",\"totalRemaining\":" + String(totalRemaining);
   json += ",\"elapsed\":" + String(state == Running ? (now - firingStartMs) / 1000UL : 0UL);
   json += ",\"maxTemp\":" + String(MAX_SAFE_TEMP, 0);
+  json += ",\"maxSteps\":" + String(MAX_STEPS);
+  json += ",\"programVersion\":" + String(programVersion);
   json += ",\"rssi\":" + String(WiFi.RSSI());
   json += "}";
+  return json;
+}
+
+String ProgramJson() {
+  String json = "{\"version\":" + String(programVersion) + ",\"steps\":[";
+  for (int i = 0; i < stepCount; i++) {
+    if (i > 0) json += ",";
+    json += "[" + String((int)steps[i].StepType) + "," + String(steps[i].TargetTemp) + ","
+          + String(steps[i].DurationMins) + "]";
+  }
+  json += "]}";
   return json;
 }
