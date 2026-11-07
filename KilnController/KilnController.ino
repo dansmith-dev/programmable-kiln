@@ -335,6 +335,7 @@ void StartFiring() {
   heaterChangedMs = millis();
   heaterChangedTemp = lastTemp;
   state = Running;
+  ClearHistory();
   Serial.println("Firing started");
   RefreshRunPage();
 }
@@ -490,6 +491,8 @@ void loop() {
   } else {
     digitalWrite(SSR_PIN, LOW);
   }
+
+  RecordHistory(currentTemp, now);
 
   RefreshRunPage();
 }

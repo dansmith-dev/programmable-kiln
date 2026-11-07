@@ -14,6 +14,8 @@ const int TOKEN_BYTES = 16;
 const int TOKEN_EEPROM_ADDR = 256;                         // the program uses bytes 0-121
 const uint8_t TOKEN_MARKER = 0x5A;
 const unsigned long WIFI_CHECK_MS = 5000UL;
+const unsigned long HISTORY_INTERVAL_MS = 60UL * 1000UL;  // one sample a minute...
+const int HISTORY_SIZE = 1440;                             // ...for 24 hours
 const unsigned long REQUEST_TIMEOUT_MS = 2000UL;
 const unsigned int MAX_BODY = 600;
 
@@ -30,6 +32,13 @@ int pairAttemptsLeft = 0;
 
 uint8_t webTokens[MAX_WEB_DEVICES][TOKEN_BYTES];
 uint8_t nextTokenSlot = 0;
+
+int16_t historyTemp[HISTORY_SIZE];
+int16_t historySetpoint[HISTORY_SIZE];   // -1 when not firing
+int historyCount = 0;
+int historyNext = 0;
+unsigned long lastHistoryMs = 0;
+bool historyStarted = false;
 
 // The request being handled
 String reqMethod = "";
@@ -100,6 +109,22 @@ void ForgetAllWebDevices() {
   memset(webTokens, 0, sizeof(webTokens));
   nextTokenSlot = 0;
   SaveWebTokens();
+}
+
+void ClearHistory() {
+  historyCount = 0;
+  historyNext = 0;
+  historyStarted = false;   // take a sample straight away
+}
+
+void RecordHistory(float temp, unsigned long now) {
+  if (historyStarted && now - lastHistoryMs < HISTORY_INTERVAL_MS) return;
+  historyStarted = true;
+  lastHistoryMs = now;
+  historyTemp[historyNext] = (int16_t)lround(temp);
+  historySetpoint[historyNext] = state == Running ? (int16_t)lround(lastSetpoint) : -1;
+  historyNext = (historyNext + 1) % HISTORY_SIZE;
+  if (historyCount < HISTORY_SIZE) historyCount++;
 }
 
 // ---------- WiFi ----------
@@ -355,6 +380,8 @@ void HandleRequest(WiFiClient &c) {
     if (state == Running) SendError(c, 409, "Stop the firing before changing the program");
     else if (!ReplaceProgram(reqBody)) SendError(c, 400, "The program has an invalid step");
     else SendJson(c, 200, ProgramJson());
+  } else if (get && reqPath == "/api/history") {
+    SendHistory(c);
   } else if (post && reqPath == "/api/start") {
     if (state == Fault) SendError(c, 409, "Clear the fault with Stop first");
     else if (stepCount == 0) SendError(c, 409, "There's no program to run");
@@ -458,4 +485,28 @@ String ProgramJson() {
   }
   json += "]}";
   return json;
+}
+
+// {"interval":60,"age":12,"temp":[...],"set":[...]} oldest first; "age" is seconds since the newest sample
+void SendHistory(WiFiClient &c) {
+  SendHead(c, 200, "application/json", -1, false);
+  unsigned long age = historyStarted ? (millis() - lastHistoryMs) / 1000UL : 0;
+  String chunk = "{\"interval\":" + String(HISTORY_INTERVAL_MS / 1000UL) + ",\"age\":" + String(age) + ",\"temp\":[";
+  int first = (historyNext - historyCount + HISTORY_SIZE) % HISTORY_SIZE;
+
+  for (int pass = 0; pass < 2; pass++) {
+    int16_t *values = pass == 0 ? historyTemp : historySetpoint;
+    if (pass == 1) chunk += "],\"set\":[";
+    for (int k = 0; k < historyCount; k++) {
+      if (k > 0) chunk += ",";
+      chunk += String(values[(first + k) % HISTORY_SIZE]);
+      if (chunk.length() > 900) {
+        c.print(chunk);
+        chunk = "";
+        WDT.refresh();
+      }
+    }
+  }
+  chunk += "]}";
+  c.print(chunk);
 }
