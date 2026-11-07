@@ -14,6 +14,7 @@ const int TOKEN_BYTES = 16;
 const int TOKEN_EEPROM_ADDR = 256;                         // the program uses bytes 0-121
 const uint8_t TOKEN_MARKER = 0x5A;
 const unsigned long WIFI_CHECK_MS = 5000UL;
+const unsigned long WIFI_RETRY_MS = 60UL * 1000UL;
 const unsigned long HISTORY_INTERVAL_MS = 60UL * 1000UL;  // one sample a minute...
 const int HISTORY_SIZE = 1440;                             // ...for 24 hours
 const unsigned long REQUEST_TIMEOUT_MS = 2000UL;
@@ -23,6 +24,7 @@ WiFiServer webServer(80);
 bool wifiModulePresent = false;
 bool wifiConnected = false;
 unsigned long lastWifiCheckMs = 0;
+unsigned long lastWifiRetryMs = 0;
 String ipText = "";
 
 String pairCode = "";
@@ -66,6 +68,7 @@ void WebSetup() {
   Serial.print("Joining WiFi ");
   Serial.println(SECRET_SSID);
   WiFi.begin(SECRET_SSID, SECRET_PASS);   // waits up to 10 seconds
+  WiFi.setTimeout(0);                      // later reconnects must not hold up the loop
   CheckWifi(millis());
 }
 
@@ -148,6 +151,16 @@ void CheckWifi(unsigned long now) {
     ipText = "";
     Serial.println("WiFi lost");
     RefreshRunPage();
+  }
+
+  // Only try to rejoin when the kiln isn't firing and the heater is off. The WiFi
+  // module normally answers straight away, but if it ever stalls the watchdog will
+  // reset the board, and that must never happen in the middle of a firing.
+  if (!connected && (state == Idle || state == Finished) && !heaterOn
+      && now - lastWifiRetryMs >= WIFI_RETRY_MS) {
+    lastWifiRetryMs = now;
+    WDT.refresh();
+    WiFi.begin(SECRET_SSID, SECRET_PASS);
   }
 }
 
