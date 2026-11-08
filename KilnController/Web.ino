@@ -5,6 +5,11 @@
 // and once the code is typed into the browser it gets a token that it sends with every
 // request (X-Kiln-Token header). Tokens are kept in EEPROM so paired browsers survive
 // a power cut. Type FORGETWEB in the Serial Monitor to unpair every browser.
+//
+// The page itself lives in web/index.html. After changing it, run web/build.ps1 to
+// regenerate webpage.h, then upload the sketch again.
+
+#include "webpage.h"
 
 const unsigned long PAIR_CODE_MS = 3UL * 60UL * 1000UL;   // how long a code stays valid
 const unsigned long PAIR_COOLDOWN_MS = 10UL * 1000UL;     // minimum gap between new codes
@@ -376,7 +381,7 @@ void HandleRequest(WiFiClient &c) {
   bool get = reqMethod == "GET";
   bool post = reqMethod == "POST";
 
-  if (get && (reqPath == "/" || reqPath == "/index.html")) { SendPlaceholder(c); return; }
+  if (get && (reqPath == "/" || reqPath == "/index.html")) { SendPage(c); return; }
   if (post && reqPath == "/api/pair/start") { StartPairing(c); return; }
   if (post && reqPath == "/api/pair") { FinishPairing(c); return; }
 
@@ -449,10 +454,16 @@ void SendError(WiFiClient &c, int code, const String &message) {
   SendJson(c, code, "{\"error\":\"" + message + "\"}");
 }
 
-void SendPlaceholder(WiFiClient &c) {
-  c.print("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n"
-          "<!doctype html><meta name=\"viewport\" content=\"width=device-width\"><title>Kiln</title>"
-          "<h1>Kiln</h1><p>Web control is on its way.</p>");
+void SendPage(WiFiClient &c) {
+  SendHead(c, 200, "text/html; charset=utf-8", KILN_PAGE_GZ_LEN, true);
+  size_t sent = 0;
+  while (sent < KILN_PAGE_GZ_LEN) {
+    size_t n = KILN_PAGE_GZ_LEN - sent;
+    if (n > 1024) n = 1024;
+    if (c.write(KILN_PAGE_GZ + sent, n) == 0) break;   // browser went away
+    sent += n;
+    WDT.refresh();
+  }
 }
 
 String StatusJson() {

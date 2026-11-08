@@ -6,3 +6,7 @@ build/
 
 # WiFi password; copy arduino_secrets.example.h to create it
 arduino_secrets.h
+
+# Web UI
+node_modules/
+dist/
