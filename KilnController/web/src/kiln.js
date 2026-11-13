@@ -10,6 +10,8 @@ export function fmtDuration(sec) {
 
 export const fmtMins = (mins) => fmtDuration(mins * 60);
 
+export const fmtClock = (date) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
 // Approximate colour of glowing ceramic at a temperature
 const COLOUR_STOPS = [
   [0, [96, 112, 140]], [300, [120, 100, 110]], [500, [110, 30, 24]], [650, [178, 32, 22]],
@@ -40,3 +42,40 @@ export const parseProgram = (p) => ({ version: p.version, steps: p.steps.map(([t
 export const totalMins = (steps) => steps.reduce((a, s) => a + (Number(s.mins) || 0), 0);
 
 export const peakTemp = (steps) => steps.reduce((a, s) => Math.max(a, Number(s.temp) || 0), 0);
+
+export function stepDescription(step, prevTemp) {
+  if (step.type === 1) return `Hold at ${step.temp}°C for ${fmtMins(step.mins)}`;
+  let text = `Ramp to ${step.temp}°C over ${fmtMins(step.mins)}`;
+  if (prevTemp != null && step.mins > 0) {
+    const rate = Math.round(((step.temp - prevTemp) / step.mins) * 60);
+    text += ` (${rate > 0 ? "+" : ""}${rate}°C/h)`;
+  }
+  return text;
+}
+
+// Kiln history samples followed by the live readings since: [[unix seconds, temp, setpoint or -1]]
+export function readings(history, liveTail) {
+  const out = [];
+  if (history && history.temp.length) {
+    const n = history.temp.length;
+    const newest = history.receivedAt / 1000 - history.age;
+    for (let k = 0; k < n; k++) {
+      out.push([newest - (n - 1 - k) * history.interval, history.temp[k], history.set[k]]);
+    }
+  }
+  return out.concat(liveTail);
+}
+
+// Heating rate in °C/h over the last ~10 minutes, or null with less than a minute of readings
+export function heatingRate(r) {
+  if (r.length < 2) return null;
+  const last = r[r.length - 1];
+  let first = r[0];
+  for (let k = r.length - 2; k >= 0; k--) {
+    first = r[k];
+    if (last[0] - r[k][0] >= 600) break;
+  }
+  const span = last[0] - first[0];
+  if (span < 60) return null;
+  return ((last[1] - first[1]) / span) * 3600;
+}

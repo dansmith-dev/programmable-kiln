@@ -1,17 +1,19 @@
 import { api, errorText } from "../api.js";
-import { fmtMins, peakTemp, totalMins } from "../kiln.js";
+import { fmtClock, fmtDuration, fmtMins, heatingRate, peakTemp, readings, stepDescription, totalMins } from "../kiln.js";
 import { useUi } from "../ui.jsx";
 import Gauge from "./Gauge.jsx";
 import { Alert, Heat } from "./Icons.jsx";
 
 export default function FiringTab({ kiln }) {
-  const { status: s, program } = kiln;
+  const { status: s, program, history, liveTail } = kiln;
   const { toast, confirm } = useUi();
   if (!s) return <div className="card empty-state">Waiting for the kiln…</div>;
 
   const steps = program.steps;
   const running = s.state === "Running";
   const fault = s.state === "Fault";
+  const r = readings(history, liveTail);
+  const rate = heatingRate(r);
 
   async function start() {
     let body = `${steps.length} steps, about ${fmtMins(totalMins(steps))}, up to ${peakTemp(steps)}°C. Make sure the kiln is loaded, closed and nothing is near it.`;
@@ -37,6 +39,25 @@ export default function FiringTab({ kiln }) {
     } catch (e) {
       toast(errorText(e), true);
     }
+  }
+
+  // Current step headline
+  let title, desc;
+  if (running && s.step < steps.length) {
+    const st = steps[s.step];
+    title = `Step ${s.step + 1} of ${steps.length} · ${st.type === 1 ? "Hold" : "Ramp"}`;
+    desc = stepDescription(st, s.step === 0 ? null : steps[s.step - 1].temp);
+  } else if (s.state === "Finished") {
+    title = "Firing finished";
+    desc = "Leave the kiln to cool before opening it.";
+  } else if (fault) {
+    title = "Stopped by a fault";
+    desc = "";
+  } else {
+    title = steps.length ? "Ready to fire" : "No program";
+    desc = steps.length
+      ? `${steps.length} step${steps.length === 1 ? "" : "s"} · ${fmtMins(totalMins(steps))} · peak ${peakTemp(steps)}°C`
+      : "Set up a program on the Program tab.";
   }
 
   return (
@@ -68,7 +89,77 @@ export default function FiringTab({ kiln }) {
             </div>
           </div>
         )}
+
+        <div className="card">
+          <div className="step-now">
+            <div>
+              <div className="title">{title}</div>
+              <div className="desc">{desc}</div>
+            </div>
+          </div>
+          <Timeline steps={steps} status={s} />
+        </div>
+
+        <div className="stats">
+          <Stat label="Step time left" value={running ? fmtDuration(s.stepRemaining) : "—"} />
+          <Stat
+            label="Total time left"
+            value={running ? fmtDuration(s.totalRemaining) : steps.length && !fault ? fmtMins(totalMins(steps)) : "—"}
+            sub={running ? "Done around " + fmtClock(new Date(Date.now() + s.totalRemaining * 1000)) : ""}
+          />
+          <Stat label="Elapsed" value={running ? fmtDuration(s.elapsed) : "—"} />
+          <Stat label="Rate now" value={rate == null ? "—" : (rate > 0.5 ? "+" : "") + Math.round(rate)} sub="°C per hour" />
+        </div>
       </div>
     </div>
+  );
+}
+
+function Stat({ label, value, sub }) {
+  return (
+    <div className="stat">
+      <div className="label">{label}</div>
+      <div className="value num">{value}</div>
+      {sub ? <div className="sub">{sub}</div> : null}
+    </div>
+  );
+}
+
+function Timeline({ steps, status: s }) {
+  if (!steps.length) return null;
+  const running = s.state === "Running";
+  return (
+    <>
+      <div className="timeline">
+        {steps.map((st, i) => {
+          let width = 0;
+          if (s.state === "Finished" || (running && i < s.step)) width = 100;
+          else if (running && i === s.step) width = 100 * (1 - s.stepRemaining / (st.mins * 60));
+          return (
+            <div
+              key={i}
+              className={"seg" + (st.type === 1 ? " hold" : "")}
+              style={{ flexGrow: st.mins }}
+              title={`Step ${i + 1}: ${st.type === 1 ? "Hold" : "Ramp"} ${st.temp}°C, ${fmtMins(st.mins)}`}
+            >
+              <i style={{ width: width.toFixed(1) + "%" }} />
+            </div>
+          );
+        })}
+      </div>
+      <div className="timeline-labels">
+        {running ? (
+          <>
+            <span>Started {fmtClock(new Date(Date.now() - s.elapsed * 1000))}</span>
+            <span>Ends {fmtClock(new Date(Date.now() + s.totalRemaining * 1000))}</span>
+          </>
+        ) : (
+          <>
+            <span>Start</span>
+            <span>{fmtMins(totalMins(steps))}</span>
+          </>
+        )}
+      </div>
+    </>
   );
 }
