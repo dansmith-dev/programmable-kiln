@@ -4,7 +4,7 @@
 //   - or run `npm run dev` alongside it for live reloading at http://localhost:5173
 // The pairing code is printed here (the real kiln shows it on its screen).
 // Time runs 60x faster than real life so you can watch a firing.
-// SPEED=1 runs in real time.
+// DEMO=1 starts 3 hours into a firing; SPEED=1 runs in real time.
 
 const http = require("http");
 const fs = require("fs");
@@ -48,6 +48,21 @@ function tick() {
   }
 }
 setInterval(tick, 1000);
+
+// DEMO=1 starts the pretend kiln 3 hours into a firing, with history filled in
+if (process.env.DEMO) {
+  const now = simNow();
+  state = "Running";
+  firingStart = stepStart = now - 3 * 3600000;
+  stepStartTemp = 21;
+  for (let m = 0; m <= 180; m++) {
+    const sp = 21 + (600 - 21) * (m / 360);
+    const t = sp - 4 + Math.sin(m / 7) * 3 + (m < 20 ? -m / 4 : 0);
+    history.push([Math.round(t), Math.round(sp)]);
+  }
+  temp = history[history.length - 1][0];
+  lastSample = now;
+}
 
 function status() {
   const now = simNow();
@@ -102,7 +117,9 @@ http.createServer((req, res) => {
     }
     if (!url.startsWith("/api/")) return send(res, 404, { error: "Not found" });
     const token = req.headers["x-kiln-token"];
-    if (!tokens.has(token)) return send(res, 401, { error: "Not paired" });
+    // in DEMO mode any token from an earlier run is accepted, so a restart doesn't mean pairing again
+    const known = tokens.has(token) || (process.env.DEMO && /^[0-9a-f]{32}$/.test(token || ""));
+    if (!known) return send(res, 401, { error: "Not paired" });
 
     if (req.method === "GET" && url === "/api/status") return send(res, 200, status());
     if (req.method === "GET" && url === "/api/program") return send(res, 200, { version: programVersion, steps });
