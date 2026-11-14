@@ -1,5 +1,7 @@
 // Formatting, colours and program maths shared by the components.
 
+export const ROOM_TEMP = 20;
+
 export function fmtDuration(sec) {
   sec = Math.max(0, Math.round(sec));
   const h = Math.floor(sec / 3600);
@@ -37,11 +39,25 @@ export function tempColor(t) {
 
 // ---------- Program ----------
 
+let nextId = 1;
+
+// Steps in the editor carry an id so React can keep each row's input text while rows move
+export const withIds = (steps) => steps.map((s) => ({ type: s.type, temp: s.temp, mins: s.mins, id: nextId++ }));
+
 export const parseProgram = (p) => ({ version: p.version, steps: p.steps.map(([type, temp, mins]) => ({ type, temp, mins })) });
+
+export const programBody = (steps) => steps.map((s) => `${s.type},${s.temp},${s.mins}`).join(";");
+
+export const sameSteps = (a, b) =>
+  a.length === b.length && a.every((s, i) => s.type === b[i].type && s.temp === b[i].temp && s.mins === b[i].mins);
 
 export const totalMins = (steps) => steps.reduce((a, s) => a + (Number(s.mins) || 0), 0);
 
 export const peakTemp = (steps) => steps.reduce((a, s) => Math.max(a, Number(s.temp) || 0), 0);
+
+export const validTemp = (t, maxTemp) => Number.isInteger(t) && t >= 0 && t <= maxTemp;
+export const validMins = (m) => Number.isInteger(m) && m >= 1 && m <= 65535;
+export const validStep = (s, maxTemp) => validTemp(s.temp, maxTemp) && validMins(s.mins);
 
 export function stepDescription(step, prevTemp) {
   if (step.type === 1) return `Hold at ${step.temp}°C for ${fmtMins(step.mins)}`;

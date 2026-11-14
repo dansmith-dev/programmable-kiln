@@ -52,6 +52,12 @@ export function useKiln(enabled) {
     [loadHistory, loadProgram]
   );
 
+  // After saving, the kiln replies with the new program
+  const programSaved = useCallback((p) => {
+    track.current.programVersion = p.version;
+    setProgram(p);
+  }, []);
+
   useEffect(() => {
     if (!enabled) return undefined;
     track.current = { lastState: null, lastElapsed: 0, historyFetchedAt: 0, programVersion: -1 };
@@ -87,5 +93,5 @@ export function useKiln(enabled) {
     };
   }, [enabled, applyStatus]);
 
-  return { status, connected, program, history, liveTail, applyStatus };
+  return { status, connected, program, history, liveTail, applyStatus, programSaved };
 }

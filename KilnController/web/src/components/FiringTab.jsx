@@ -5,7 +5,7 @@ import Chart from "./Chart.jsx";
 import Gauge from "./Gauge.jsx";
 import { Alert, Heat } from "./Icons.jsx";
 
-export default function FiringTab({ kiln }) {
+export default function FiringTab({ kiln, dirty }) {
   const { status: s, program, history, liveTail } = kiln;
   const { toast, confirm } = useUi();
   if (!s) return <div className="card empty-state">Waiting for the kiln…</div>;
@@ -18,6 +18,7 @@ export default function FiringTab({ kiln }) {
 
   async function start() {
     let body = `${steps.length} steps, about ${fmtMins(totalMins(steps))}, up to ${peakTemp(steps)}°C. Make sure the kiln is loaded, closed and nothing is near it.`;
+    if (dirty) body += " You have unsaved program changes. The kiln will run the program it already has.";
     if (!(await confirm({ title: "Start firing?", body, okText: "Start firing" }))) return;
     try {
       kiln.applyStatus(await api("/api/start", "POST", ""));
