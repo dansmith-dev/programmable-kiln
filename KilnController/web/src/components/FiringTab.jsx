@@ -1,6 +1,7 @@
 import { api, errorText } from "../api.js";
-import { fmtClock, fmtDuration, fmtMins, heatingRate, peakTemp, readings, stepDescription, totalMins } from "../kiln.js";
+import { fmtClock, fmtDuration, fmtMins, heatingRate, peakTemp, planPoints, readings, stepDescription, totalMins } from "../kiln.js";
 import { useUi } from "../ui.jsx";
+import Chart from "./Chart.jsx";
 import Gauge from "./Gauge.jsx";
 import { Alert, Heat } from "./Icons.jsx";
 
@@ -60,6 +61,26 @@ export default function FiringTab({ kiln }) {
       : "Set up a program on the Program tab.";
   }
 
+  // Chart: kiln history + live readings, and the plan while firing
+  const nowSec = Date.now() / 1000;
+  const series = [];
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  if (running && steps.length) {
+    const startAt = nowSec - s.elapsed;
+    const plan = planPoints(steps, r.length ? r[0][1] : s.temp).map(([x, y]) => [startAt + x, y]);
+    series.push({ kind: "plan", pts: plan });
+    xMin = startAt;
+    xMax = plan[plan.length - 1][0];
+  }
+  if (r.length) {
+    series.push({ kind: "set", pts: r.filter((p) => p[2] >= 0).map((p) => [p[0], p[2]]) });
+    series.push({ kind: "actual", pts: r.map((p) => [p[0], p[1]]) });
+    xMin = Math.min(xMin, r[0][0]);
+    xMax = Math.max(xMax, nowSec);
+  }
+  if (xMax - xMin < 1800) xMax = xMin + 1800;
+
   return (
     <div className="grid firing-grid">
       <div className="card hero">
@@ -109,6 +130,23 @@ export default function FiringTab({ kiln }) {
           />
           <Stat label="Elapsed" value={running ? fmtDuration(s.elapsed) : "—"} />
           <Stat label="Rate now" value={rate == null ? "—" : (rate > 0.5 ? "+" : "") + Math.round(rate)} sub="°C per hour" />
+        </div>
+
+        <div className="card">
+          <h2>Temperature</h2>
+          <Chart
+            series={series}
+            xMin={xMin}
+            xMax={xMax}
+            nowX={nowSec}
+            xLabel={(x) => fmtClock(new Date(x * 1000))}
+            emptyText="Collecting temperature readings…"
+          />
+          <div className="legend">
+            <span><i style={{ borderColor: "#ff8a3d" }} />Actual</span>
+            <span><i style={{ borderColor: "rgba(255,179,71,.7)" }} />Target</span>
+            <span><i style={{ borderColor: "rgba(255,236,224,.45)", borderTopStyle: "dashed" }} />Plan</span>
+          </div>
         </div>
       </div>
     </div>

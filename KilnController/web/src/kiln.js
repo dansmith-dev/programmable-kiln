@@ -53,6 +53,18 @@ export function stepDescription(step, prevTemp) {
   return text;
 }
 
+// [seconds from start, temp] points the program aims to follow
+export function planPoints(steps, startTemp) {
+  const pts = [[0, startTemp]];
+  let t = 0;
+  for (const st of steps) {
+    if (st.type === 1) pts.push([t, st.temp]);
+    t += st.mins * 60;
+    pts.push([t, st.temp]);
+  }
+  return pts;
+}
+
 // Kiln history samples followed by the live readings since: [[unix seconds, temp, setpoint or -1]]
 export function readings(history, liveTail) {
   const out = [];
