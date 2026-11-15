@@ -1,11 +1,16 @@
 import { useState } from "react";
+import { load, store } from "../api.js";
 import {
   ROOM_TEMP, fmtDuration, fmtMins, peakTemp, planPoints, totalMins, validMins, validStep, validTemp, withIds,
 } from "../kiln.js";
+import { useUi } from "../ui.jsx";
 import Chart from "./Chart.jsx";
 import { Down, Trash, Up } from "./Icons.jsx";
 
+const PRESET_KEY = "kilnPresets";
+
 export default function ProgramTab({ draft, setDraft, dirty, maxTemp, maxSteps, notice, onSave, onRevert, saving }) {
+  const { toast } = useUi();
   const allValid = draft.every((s) => validStep(s, maxTemp));
 
   const update = (id, changes) => setDraft((d) => d.map((s) => (s.id === id ? { ...s, ...changes } : s)));
@@ -82,6 +87,7 @@ export default function ProgramTab({ draft, setDraft, dirty, maxTemp, maxSteps, 
             <button className="btn ghost" onClick={onRevert} disabled={!dirty}>Undo changes</button>
           </div>
         </div>
+        <Presets draft={draft} setDraft={setDraft} allValid={allValid} toast={toast} />
       </div>
     </div>
   );
@@ -141,6 +147,69 @@ function StepRow({ step, index, count, prevTemp, maxTemp, onChange, onRemove, on
         <button className="icon-btn" aria-label="Move down" disabled={index === count - 1} onClick={() => onMove(1)}><Down /></button>
         <button className="icon-btn" aria-label="Delete step" onClick={onRemove}><Trash /></button>
       </div>
+    </div>
+  );
+}
+
+// Named programs kept in this browser's storage
+function Presets({ draft, setDraft, allValid, toast }) {
+  const { confirm } = useUi();
+  const [presets, setPresets] = useState(() => load(PRESET_KEY, {}));
+  const names = Object.keys(presets).sort();
+  const [selected, setSelected] = useState(names[0] || "");
+  const [name, setName] = useState("");
+  const current = names.includes(selected) ? selected : names[0] || "";
+
+  const save = (next) => {
+    setPresets(next);
+    store(PRESET_KEY, next);
+  };
+
+  function savePreset() {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!draft.length || !allValid) {
+      toast("Fix the program before saving it", true);
+      return;
+    }
+    save({ ...presets, [trimmed]: draft.map(({ type, temp, mins }) => ({ type, temp, mins })) });
+    setSelected(trimmed);
+    setName("");
+    toast(`Saved "${trimmed}" in this browser`);
+  }
+
+  async function deletePreset() {
+    if (!current) return;
+    if (!(await confirm({ title: "Delete saved program?", body: `"${current}" will be removed from this browser.`, okText: "Delete", danger: true }))) return;
+    const next = { ...presets };
+    delete next[current];
+    save(next);
+  }
+
+  return (
+    <div className="card presets">
+      <h2>Saved programs</h2>
+      <p className="hint">Kept in this browser, so you can switch between bisque, glaze and so on.</p>
+      <div className="line">
+        <select value={current} onChange={(e) => setSelected(e.target.value)} disabled={!names.length}>
+          {names.length ? names.map((n) => <option key={n}>{n}</option>) : <option value="">None saved yet</option>}
+        </select>
+        <button
+          className="btn small"
+          disabled={!current}
+          onClick={() => {
+            setDraft(withIds(presets[current]));
+            toast("Loaded. Press Save to kiln to use it.");
+          }}
+        >
+          Load
+        </button>
+        <button className="icon-btn" aria-label="Delete saved program" disabled={!current} onClick={deletePreset}><Trash /></button>
+      </div>
+      <form className="line" onSubmit={(e) => { e.preventDefault(); savePreset(); }}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name, e.g. Bisque 1000°C" maxLength={40} />
+        <button className="btn small" type="submit">Save</button>
+      </form>
     </div>
   );
 }
