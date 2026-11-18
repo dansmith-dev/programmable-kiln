@@ -30,7 +30,9 @@ export default function App() {
   useEffect(() => {
     const prev = prevProgram.current;
     prevProgram.current = program;
-    if (sameSteps(draftRef.current, prev.steps)) setDraft(withIds(program.steps));
+    if (sameSteps(draftRef.current, program.steps)) setNotice((n) => (n === "Saved" ? n : ""));
+    else if (sameSteps(draftRef.current, prev.steps)) setDraft(withIds(program.steps));
+    else setNotice("The program was changed on the kiln. Undo changes to see it.");
   }, [program]);
 
   // Background glow follows the kiln temperature
