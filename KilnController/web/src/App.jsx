@@ -24,6 +24,7 @@ export default function App() {
   const prevProgram = useRef(program);
 
   const dirty = !sameSteps(draft, program.steps);
+  const running = status?.state === "Running";
 
   useEffect(() => setUnauthorizedHandler(() => setPaired(false)), []);
 
@@ -102,6 +103,7 @@ export default function App() {
                 draft={draft}
                 setDraft={setDraft}
                 dirty={dirty}
+                running={running}
                 maxTemp={status?.maxTemp ?? 1300}
                 maxSteps={status?.maxSteps ?? 20}
                 notice={notice}

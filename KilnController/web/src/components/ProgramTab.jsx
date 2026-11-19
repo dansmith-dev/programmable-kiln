@@ -9,7 +9,7 @@ import { Down, Trash, Up } from "./Icons.jsx";
 
 const PRESET_KEY = "kilnPresets";
 
-export default function ProgramTab({ draft, setDraft, dirty, maxTemp, maxSteps, notice, onSave, onRevert, saving }) {
+export default function ProgramTab({ draft, setDraft, dirty, running, maxTemp, maxSteps, notice, onSave, onRevert, saving }) {
   const { toast } = useUi();
   const allValid = draft.every((s) => validStep(s, maxTemp));
 
@@ -31,7 +31,8 @@ export default function ProgramTab({ draft, setDraft, dirty, maxTemp, maxSteps, 
   const plan = planPoints(validSteps, ROOM_TEMP);
 
   let message = notice;
-  if (!allValid) message = "Fix the highlighted values before saving.";
+  if (running) message = "The program can't be changed during a firing.";
+  else if (!allValid) message = "Fix the highlighted values before saving.";
   else if (dirty) message = "Unsaved changes";
 
   return (
@@ -62,6 +63,7 @@ export default function ProgramTab({ draft, setDraft, dirty, maxTemp, maxSteps, 
                 count={draft.length}
                 prevTemp={i === 0 ? ROOM_TEMP : draft[i - 1].temp}
                 maxTemp={maxTemp}
+                locked={running}
                 onChange={(changes) => update(step.id, changes)}
                 onRemove={() => remove(step.id)}
                 onMove={(dir) => move(i, dir)}
@@ -69,7 +71,7 @@ export default function ProgramTab({ draft, setDraft, dirty, maxTemp, maxSteps, 
             ))}
           </div>
           <div style={{ marginTop: 10 }}>
-            <button className="add-step" onClick={add} disabled={draft.length >= maxSteps}>+ Add step</button>
+            <button className="add-step" onClick={add} disabled={running || draft.length >= maxSteps}>+ Add step</button>
           </div>
         </div>
       </div>
@@ -83,18 +85,18 @@ export default function ProgramTab({ draft, setDraft, dirty, maxTemp, maxSteps, 
           </div>
           <div className="program-actions">
             <div className="notice">{message}</div>
-            <button className="btn primary" onClick={onSave} disabled={!dirty || !allValid || saving}>Save to kiln</button>
+            <button className="btn primary" onClick={onSave} disabled={!dirty || !allValid || running || saving}>Save to kiln</button>
             <button className="btn ghost" onClick={onRevert} disabled={!dirty}>Undo changes</button>
           </div>
         </div>
-        <Presets draft={draft} setDraft={setDraft} allValid={allValid} toast={toast} />
+        <Presets draft={draft} setDraft={setDraft} locked={running} allValid={allValid} toast={toast} />
       </div>
     </div>
   );
 }
 
 // Inputs keep their own text so half-typed values (empty, "1") don't get overwritten
-function StepRow({ step, index, count, prevTemp, maxTemp, onChange, onRemove, onMove }) {
+function StepRow({ step, index, count, prevTemp, maxTemp, locked, onChange, onRemove, onMove }) {
   const [text, setText] = useState({
     temp: String(step.temp),
     h: String(Math.floor(step.mins / 60)),
@@ -126,33 +128,33 @@ function StepRow({ step, index, count, prevTemp, maxTemp, onChange, onRemove, on
       <div className="n">{index + 1}</div>
       <div className="step-fields">
         <div className="seg-toggle">
-          <button className={step.type === 0 ? "on" : ""} onClick={() => onChange({ type: 0 })}>Ramp</button>
-          <button className={step.type === 1 ? "on" : ""} onClick={() => onChange({ type: 1 })}>Hold</button>
+          <button className={step.type === 0 ? "on" : ""} onClick={() => onChange({ type: 0 })} disabled={locked}>Ramp</button>
+          <button className={step.type === 1 ? "on" : ""} onClick={() => onChange({ type: 1 })} disabled={locked}>Hold</button>
         </div>
         <label className="field">
           {step.type === 1 ? "at" : "to"}{" "}
-          <input className={tempBad ? "bad" : ""} inputMode="numeric" value={text.temp}
+          <input className={tempBad ? "bad" : ""} inputMode="numeric" value={text.temp} disabled={locked}
             onChange={(e) => edit("temp", e.target.value)} /> °C
         </label>
         <label className="field">
-          for <input className={"short" + (minsBad ? " bad" : "")} inputMode="numeric" value={text.h}
+          for <input className={"short" + (minsBad ? " bad" : "")} inputMode="numeric" value={text.h} disabled={locked}
             onChange={(e) => edit("h", e.target.value)} /> h{" "}
-          <input className={"short" + (minsBad ? " bad" : "")} inputMode="numeric" value={text.m}
+          <input className={"short" + (minsBad ? " bad" : "")} inputMode="numeric" value={text.m} disabled={locked}
             onChange={(e) => edit("m", e.target.value)} /> m
         </label>
         <div className="rate">{rateText}</div>
       </div>
       <div className="row-tools">
-        <button className="icon-btn" aria-label="Move up" disabled={index === 0} onClick={() => onMove(-1)}><Up /></button>
-        <button className="icon-btn" aria-label="Move down" disabled={index === count - 1} onClick={() => onMove(1)}><Down /></button>
-        <button className="icon-btn" aria-label="Delete step" onClick={onRemove}><Trash /></button>
+        <button className="icon-btn" aria-label="Move up" disabled={locked || index === 0} onClick={() => onMove(-1)}><Up /></button>
+        <button className="icon-btn" aria-label="Move down" disabled={locked || index === count - 1} onClick={() => onMove(1)}><Down /></button>
+        <button className="icon-btn" aria-label="Delete step" disabled={locked} onClick={onRemove}><Trash /></button>
       </div>
     </div>
   );
 }
 
 // Named programs kept in this browser's storage
-function Presets({ draft, setDraft, allValid, toast }) {
+function Presets({ draft, setDraft, locked, allValid, toast }) {
   const { confirm } = useUi();
   const [presets, setPresets] = useState(() => load(PRESET_KEY, {}));
   const names = Object.keys(presets).sort();
@@ -196,7 +198,7 @@ function Presets({ draft, setDraft, allValid, toast }) {
         </select>
         <button
           className="btn small"
-          disabled={!current}
+          disabled={locked || !current}
           onClick={() => {
             setDraft(withIds(presets[current]));
             toast("Loaded. Press Save to kiln to use it.");
