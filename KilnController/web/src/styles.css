@@ -225,13 +225,17 @@ main { width: 100%; max-width: 1120px; margin: 0 auto; padding: 0 16px 48px; }
 .pair-card .flame { width: 64px; height: 64px; margin: 0 auto 10px; filter: drop-shadow(0 0 18px rgba(255, 122, 47, 0.7)); }
 .pair-card h1 { margin: 0 0 6px; font-size: 24px; }
 .pair-card p { margin: 0 0 20px; color: var(--muted); }
-.code-inputs { display: flex; gap: 8px; justify-content: center; margin: 6px 0 18px; }
-.code-inputs input {
-  width: 46px; height: 58px; text-align: center; font-size: 26px; font-weight: 700;
+.code-inputs { position: relative; display: flex; gap: 8px; justify-content: center; margin: 6px auto 18px; width: max-content; }
+.code-inputs .box {
+  width: 46px; height: 58px; display: grid; place-items: center; font-size: 26px; font-weight: 700;
   border-radius: 12px; border: 1px solid var(--line-2); background: rgba(0,0,0,0.3);
   font-variant-numeric: tabular-nums;
 }
-.code-inputs input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.code-inputs .box.cur { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+.code-inputs input {
+  position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0;
+  font-size: 16px; caret-color: transparent; cursor: text;
+}
 .pair-error { color: #ff9c9c; min-height: 20px; font-size: 14px; margin-bottom: 10px; }
 .countdown { font-size: 13px; color: var(--faint); margin-top: 12px; }
 

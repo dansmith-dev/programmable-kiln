@@ -3,18 +3,16 @@ import { api, errorText, setToken } from "../api.js";
 import { useUi } from "../ui.jsx";
 import { Flame } from "./Icons.jsx";
 
-const EMPTY = ["", "", "", "", "", ""];
-
 // Ask the kiln to show a code, then type it in to get a token for this browser
 export default function Pairing({ onPaired }) {
   const { toast } = useUi();
   const [expiresAt, setExpiresAt] = useState(0);
   const [now, setNow] = useState(Date.now());
-  const [digits, setDigits] = useState(EMPTY);
+  const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const boxes = useRef([]);
-  const code = digits.join("");
+  const [focused, setFocused] = useState(false);
+  const inputRef = useRef(null);
 
   const showingCode = expiresAt > 0;
   const secondsLeft = Math.round((expiresAt - now) / 1000);
@@ -38,9 +36,9 @@ export default function Pairing({ onPaired }) {
       const r = await api("/api/pair/start", "POST", "");
       setExpiresAt(Date.now() + r.seconds * 1000);
       setNow(Date.now());
-      setDigits(EMPTY);
+      setCode("");
       setError("");
-      setTimeout(() => boxes.current[0]?.focus(), 0);
+      setTimeout(() => inputRef.current?.focus(), 0);
     } catch (e) {
       toast(errorText(e), true);
     } finally {
@@ -59,8 +57,8 @@ export default function Pairing({ onPaired }) {
     } catch (e) {
       if (e.status === 403 && e.data?.left) {
         setError(`That code doesn't match. ${e.data.left} ${e.data.left === 1 ? "try" : "tries"} left.`);
-        setDigits(EMPTY);
-        boxes.current[0]?.focus();
+        setCode("");
+        inputRef.current?.focus();
       } else if (e.status === 403 || e.status === 410) {
         setExpiresAt(0);
         toast(e.message, true);
@@ -72,28 +70,11 @@ export default function Pairing({ onPaired }) {
     }
   }
 
-  // Fill boxes from position `from`, e.g. when a whole code is pasted
-  function fill(from, text) {
-    const next = [...digits];
-    for (let k = 0; k < text.length && from + k < 6; k++) next[from + k] = text[k];
-    setDigits(next);
+  function onChange(e) {
+    const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+    setCode(digits);
     setError("");
-    boxes.current[Math.min(5, from + text.length)]?.focus();
-    if (next.join("").length === 6) connect(next.join(""));
-  }
-
-  function onDigit(i, value) {
-    const typed = value.replace(/\D/g, "");
-    if (typed.length > 1) {
-      fill(i, typed);
-      return;
-    }
-    const next = [...digits];
-    next[i] = typed;
-    setDigits(next);
-    setError("");
-    if (typed && i < 5) boxes.current[i + 1]?.focus();
-    if (next.join("").length === 6) connect(next.join(""));
+    if (digits.length === 6) connect(digits);
   }
 
   return (
@@ -109,27 +90,25 @@ export default function Pairing({ onPaired }) {
           </button>
         ) : (
           <>
+            {/* One real input drawn as six boxes, so typing fast, pasting and phone autofill all work */}
             <div className="code-inputs">
-              {digits.map((d, i) => (
-                <input
-                  key={i}
-                  ref={(el) => (boxes.current[i] = el)}
-                  value={d}
-                  onChange={(e) => onDigit(i, e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Backspace" && !d && i > 0) boxes.current[i - 1]?.focus();
-                    if (e.key === "Enter") connect(code);
-                  }}
-                  onPaste={(e) => {
-                    e.preventDefault();
-                    fill(0, (e.clipboardData.getData("text") || "").replace(/\D/g, ""));
-                  }}
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={1}
-                  aria-label={`Digit ${i + 1}`}
-                />
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className={"box" + (focused && i === Math.min(code.length, 5) ? " cur" : "")}>
+                  {code[i] || ""}
+                </div>
               ))}
+              <input
+                ref={inputRef}
+                value={code}
+                onChange={onChange}
+                onKeyDown={(e) => e.key === "Enter" && connect(code)}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                aria-label="Code from the kiln's screen"
+              />
             </div>
             <div className="pair-error">{error}</div>
             <button className="btn primary" style={{ width: "100%" }} onClick={() => connect(code)} disabled={busy || code.length !== 6}>
