@@ -14,10 +14,10 @@ export const fmtMins = (mins) => fmtDuration(mins * 60);
 
 export const fmtClock = (date) => date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-// Approximate colour of glowing ceramic at a temperature
+// Colour of the kiln at a temperature: cool slate, warming through peach and red to yellow-white
 const COLOUR_STOPS = [
-  [0, [96, 112, 140]], [300, [120, 100, 110]], [500, [110, 30, 24]], [650, [178, 32, 22]],
-  [800, [232, 70, 20]], [950, [255, 128, 32]], [1100, [255, 190, 70]], [1250, [255, 232, 160]], [1400, [255, 248, 230]],
+  [0, [120, 150, 200]], [300, [235, 150, 100]], [600, [228, 64, 42]], [800, [242, 84, 26]],
+  [950, [255, 130, 35]], [1100, [255, 190, 70]], [1250, [255, 232, 160]], [1400, [255, 248, 230]],
 ];
 
 export function tempColor(t) {
