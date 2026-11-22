@@ -1,14 +1,16 @@
 # Programmable Kiln
 
-A controller for an electric kiln: an Arduino UNO R4 switches the elements through a
-solid-state relay, reads the temperature from a K-type thermocouple, and runs ramp/hold
-firing programs set up on a Nextion touch screen.
+A controller for an electric kiln: an Arduino UNO R4 WiFi switches the elements through a
+solid-state relay, a Nextion touch screen runs it at the kiln, and a web page lets you
+watch and program a firing from your phone or computer.
+
+![Firing view](docs/screenshots/03-firing.png)
 
 ## Hardware
 
 | Part | Connection |
 | --- | --- |
-| Arduino UNO R4 | |
+| Arduino UNO R4 WiFi | |
 | MAX31855 thermocouple board | CLK → D13, CS → D10, DO → D12 |
 | K-type thermocouple | MAX31855 + / − |
 | Solid-state relay (heater) | D3 → SSR input |
@@ -23,14 +25,18 @@ firing programs set up on a Nextion touch screen.
 | Path | What it is |
 | --- | --- |
 | `KilnController/` | Arduino sketch (open `KilnController.ino` in the Arduino IDE) |
+| `KilnController/web/` | React web UI, built into `KilnController/webpage.h` |
 | `nextion/` | Nextion Editor project (`Kiln.HMI`), fonts and the compiled `Kiln.tft` |
+| `docs/screenshots/` | Screenshots of the web UI |
 
 ## Building
 
 1. Install the Arduino IDE with the **Arduino UNO R4 Boards** package and the
    **Adafruit MAX31855** library.
-2. Open `KilnController/KilnController.ino` and upload it.
-3. Copy `nextion/Kiln.tft` to a microSD card and power the screen up with the card in to
+2. Copy `KilnController/arduino_secrets.example.h` to `KilnController/arduino_secrets.h`
+   and fill in your WiFi name and password. The real file is ignored by git.
+3. Open `KilnController/KilnController.ino` and upload it.
+4. Copy `nextion/Kiln.tft` to a microSD card and power the screen up with the card in to
    load it. To change the screens, open `nextion/Kiln.HMI` in Nextion Editor.
 
 ## Firing programs
@@ -72,5 +78,62 @@ typed into the Serial Monitor for testing.
 | `ADD` / `EDIT` | Open the Edit page for a new or the selected step |
 | `SAVE,<type>,<temp>,<mins>` | Save the step from the Edit page (type 0 ramp, 1 hold) |
 | `DEL` / `MOVEUP` / `MOVEDN` | Delete or move the selected step |
+| `FORGETWEB` | (Serial Monitor) unpair every web browser |
 
 The program can't be changed while a firing is running.
+
+## Web control
+
+When the board joins your WiFi, the Run page shows its address (e.g. `Web 192.168.1.50`)
+while the kiln is idle. Open that address in a browser on the same network.
+
+![Connecting](docs/screenshots/02-enter-code.png)
+
+**Connecting a browser:** press **Show code on kiln**, then type the 6-digit code the kiln
+shows on its screen. The code lasts 3 minutes and five wrong guesses cancel it. Up to four
+browsers can be connected; type `FORGETWEB` in the Serial Monitor to disconnect them all.
+
+The web page shows the live temperature, the current step, time left, the heating rate and
+a chart of the firing against the plan. The Program tab edits the program and can keep
+named programs (bisque, glaze, …) in the browser.
+
+| Program editor | On a phone |
+| --- | --- |
+| ![Program](docs/screenshots/04-program.png) | ![Phone](docs/screenshots/06-phone-firing.png) |
+
+> The web page uses plain HTTP and is meant for your home network only. Don't expose it to
+> the internet.
+
+### API
+
+All endpoints except the page and pairing need the `X-Kiln-Token` header.
+
+| Endpoint | |
+| --- | --- |
+| `GET /` | The web page (gzipped, from `webpage.h`) |
+| `POST /api/pair/start` | Show a pairing code on the screen |
+| `POST /api/pair` | Body: the code. Returns `{ "token": "…" }` |
+| `GET /api/status` | Temperature, state, step, setpoint, time left |
+| `GET /api/program` | `{ "version", "steps": [[type, temp, mins], …] }` |
+| `POST /api/program` | Body: `type,temp,mins;type,temp,mins;…` replaces the program |
+| `GET /api/history` | One sample a minute for up to 24 hours |
+| `POST /api/start` / `POST /api/stop` | Start or stop a firing |
+| `POST /api/unpair` | Forget this browser |
+
+### Working on the web UI
+
+```powershell
+cd KilnController/web
+npm install
+npm run mock      # pretend kiln on http://localhost:8080 (prints the pairing code)
+npm run dev       # live-reloading UI on http://localhost:5173
+```
+
+`$env:DEMO = "1"` before `npm run mock` starts the pretend kiln partway through a firing.
+To use a real kiln instead, set `$env:KILN = "http://<kiln address>"` before `npm run dev`.
+
+When you're happy, rebuild the page that the sketch serves and upload the sketch again:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File KilnController/web/build.ps1
+```
