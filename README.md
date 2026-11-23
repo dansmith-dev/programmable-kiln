@@ -101,9 +101,6 @@ named programs (bisque, glaze, …) in the browser.
 | --- | --- |
 | ![Program](docs/screenshots/04-program.png) | ![Phone](docs/screenshots/06-phone-firing.png) |
 
-> The web page uses plain HTTP and is meant for your home network only. Don't expose it to
-> the internet.
-
 ### API
 
 All endpoints except the page and pairing need the `X-Kiln-Token` header.
